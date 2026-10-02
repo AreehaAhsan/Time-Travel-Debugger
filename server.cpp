@@ -10,12 +10,14 @@
 
 #include <iostream>
 #include <string>
+#include<sstream>
 #include <cstdint>
 #include <fstream>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <cstdio>
 #include <stdexcept>
+#include "MyStack.h"
 
 using namespace std;
 
@@ -75,7 +77,7 @@ public:
     {
 
         if (isEmpty()) {
-            throw out_of_range("Stack is empty.");
+            throw underflow_error("Stack is empty.");
         }
         Node* temp = top;
         T val = temp->data;
@@ -88,7 +90,7 @@ public:
     T& peek()
     {
         if (isEmpty()) {
-            throw out_of_range("Stack is empty.");
+            throw underflow_error("Stack is empty.");
         }
         return top->data;
 
@@ -228,18 +230,80 @@ struct PendingPatch
 bool readSourceLine(ifstream& in, string& out)
 {
     // reads the next nonblank line
+     while (getline(in, out)){
+        stringstream ss(out);
+        string temp;
+
+        if (ss >> temp)
+            return true;
+    }
+
+    return false;
 }
 string firstWord(const string& line)
 {
     // returns first word from the input string
+    string first;
+    stringstream ss(line);
+
+    ss >> first;
+
+    return first;
 }
 string secondWord(const string& line)
 {
     // returns the second word
+    string first, sec;
+    stringstream ss(line);
+
+    ss >> first >> sec;
+
+    return sec;
 }
 bool validateProgram(const char* sourcePath)
 {
     // for each func defined there should be exactly one func_end and no nested funcs allowed - 
+    ifstream in(sourcePath, ios::binary);
+
+    if (!in)
+        return false;
+
+    string line;
+
+    MyStack<string> st;
+
+    while (readSourceLine(in, line))
+    {
+        if(firstWord(line) == "func"){
+            if(secondWord(line) == ""){
+                return false;
+            }
+            if(st.isEmpty()){
+                st.push("func");
+            }
+            else{
+                return false;
+            }
+        }
+        else if(firstWord(line) == "func_end"){
+            if(st.isEmpty()){
+                return false;
+            }
+            if(st.top() == "func"){
+                st.pop();
+            }
+            else{
+                return false;
+            }
+        }
+    }
+
+    if(!st.isEmpty()){
+        return false;
+    }
+
+    return true;
+
 }
 
 // PASS 0x1: RESOLVE() -> resolve.bin
