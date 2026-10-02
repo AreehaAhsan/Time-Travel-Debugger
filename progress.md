@@ -9,4 +9,4 @@ Project Progress
 
 - Spent crazy amount of time doing the Linux setup, hours i could have spent doing actual project work :(
 - Made new repo, copied old work
-
+- Completed Timeline implementation 
