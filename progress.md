@@ -11,3 +11,7 @@ Project Progress
 - Made new repo, copied old work
 - Completed Timeline implementation 
 - Completed Stage 1 (File reading and validation)
+
+3 - 4 Oct, 26
+
+- Completed Satge 2

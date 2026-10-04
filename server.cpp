@@ -217,11 +217,15 @@ struct FuncEntry
 {
     string funcName;
     int64_t byteOffsetInResolveBin; // where this function's FUNC header record sits
+
+    // FuncEntry(string n, int64_t b) : funcName(n), byteOffsetInResolveBin(b){};
 };
 struct PendingPatch
 {
     int64_t byteOffsetOfOffsetField; // where in resolve.bin to seek back and overwrite
     string targetFuncName;
+
+    // PendingPatch(int64_t b, string t): byteOffsetOfOffsetField(b), targetFuncName(t){};
 };
 
 
@@ -272,8 +276,7 @@ bool validateProgram(const char* sourcePath)
 
     MyStack<string> st;
 
-    while (readSourceLine(in, line))
-    {
+    while (readSourceLine(in, line)){
         if(firstWord(line) == "func"){
             if(secondWord(line) == ""){
                 return false;
@@ -306,15 +309,42 @@ bool validateProgram(const char* sourcePath)
 
 }
 
+int64_t findFunctionOffset(FuncEntry funcArray[], int32_t funcCount, const string& target){
+    for (int32_t i = 0; i < funcCount; i++){
+        if (funcArray[i].funcName == target){
+            return funcArray[i].byteOffsetInResolveBin;
+
+        }
+    }
+
+    return -1;
+}
+
 // PASS 0x1: RESOLVE() -> resolve.bin
 int64_t writeResolveRecord(FILE* f, int64_t offsetField, const string& text)
 {
+    int32_t s_size = text.size();
+    fwrite(&offsetField, sizeof(int64_t), 1, f);
+    fwrite(&s_size, sizeof(int32_t), 1, f);
+    fwrite(text.data(), sizeof(char),  s_size, f);
+
+    // return offsetField+ sizeof(int64_t) + sizeof(int32_t) + s_size;
+    return offsetField;
     // writes one [offset(8B)][size(4B)][string] record at the current file position
     // returns this record's own starting byte position
 }
 int64_t readResolveRecord(FILE* f, string& outText)
 {
-    // reads one record at the current position and advances past it, returns the offset field - the raw line text comes back untouched in outText.
+    int64_t offset;
+    int32_t size;
+    fread(&offset, sizeof(int64_t), 1, f);
+    fread(&size, sizeof(int32_t), 1, f);
+
+    outText.resize(size);
+    fread(&outText[0], 1, size, f);
+
+    return offset;
+
 }
 int64_t resolveProgram(const char* sourcePath, const char* resolveBinPath)
 {
@@ -330,6 +360,64 @@ int64_t resolveProgram(const char* sourcePath, const char* resolveBinPath)
     // with its target's position. Patching happens after the full write
     // Returns the byte offset of main's FUNC header record.
     // if there is no main return the error 
+
+    FILE* f = fopen(resolveBinPath, "wb");
+    if(!f){
+        return -1;
+    }
+
+    ifstream in(sourcePath, ios::binary);
+
+    if (!in)
+        return -1;
+
+    string line;
+
+    int64_t offset = 0;
+
+    while (readSourceLine(in, line)){
+
+        // int64_t curOffset = nextOffset;
+        offset = writeResolveRecord(f, offset, line);
+
+
+        if(firstWord(line) == "func" && funcCount < MAX_FUNCS){
+            funcArray[funcCount].funcName = secondWord(line);
+            funcArray[funcCount].byteOffsetInResolveBin = offset;
+            funcCount++;
+        }
+
+        if(firstWord(line) == "call" && patchCount  < MAX_PATCHES){
+            patches[patchCount].targetFuncName = secondWord(line);
+            patches[patchCount].byteOffsetOfOffsetField = offset;
+            patchCount++;
+        }
+
+        offset = offset+ sizeof(int64_t) + sizeof(int32_t) + line.size();
+
+    }
+
+    for(int32_t i = 0; i<patchCount; i++){
+        int64_t targetOffset = findFunctionOffset(funcArray, funcCount, patches[i].targetFuncName);
+        if(targetOffset == -1){
+            fclose(f);
+
+            return -1;
+        }
+        fseek(f, patches[i].byteOffsetOfOffsetField, SEEK_SET);
+        fwrite(&targetOffset, sizeof(int64_t), 1, f);
+        fseek(f, 0, SEEK_END);
+
+    }
+
+    fclose(f);
+
+    int64_t mainOffset = findFunctionOffset(funcArray, funcCount, "main");
+
+    if(mainOffset == -1){
+        return -1;
+    }
+    return mainOffset;
 }
 
 // PASS 0x2: EXECUTION (tokenization happens here)
