@@ -188,6 +188,8 @@ struct Frame
     string func_name;
     int32_t argc;
     Variable argv[MAX_VARS_PER_FRAME];
+    Variable* argvRef[MAX_VARS_PER_FRAME];
+
     int32_t returnLine;
     Variable locals[MAX_VARS_PER_FRAME];
     int32_t localCount;
@@ -337,11 +339,19 @@ int64_t readResolveRecord(FILE* f, string& outText)
 {
     int64_t offset;
     int32_t size;
-    fread(&offset, sizeof(int64_t), 1, f);
-    fread(&size, sizeof(int32_t), 1, f);
+
+     if (fread(&offset, sizeof(int64_t), 1, f) != 1)
+        return -1;
+
+    if (fread(&size, sizeof(int32_t), 1, f) != 1)
+        return -1;
+
+    if (size < 0)
+        return -1;
 
     outText.resize(size);
-    fread(&outText[0], 1, size, f);
+    if (size > 0 && fread(&outText[0], sizeof(char), size, f) != static_cast<size_t>(size))
+        return -1;
 
     return offset;
 
@@ -431,6 +441,7 @@ struct Token
 {
     TokenType type;
     string text;
+    // Token(TokenType t, string txt) : type(t), text(txt) {}
 };
 int32_t tokenizeLine(const string& line, Token tokens[], int32_t maxTokens)
 {
@@ -438,19 +449,263 @@ int32_t tokenizeLine(const string& line, Token tokens[], int32_t maxTokens)
     // instruction set = [func, func_end, call, set, add, sub, mul and div]
     // next word is identifier like name of a function, variable name
     // after identifier all are the params/arg, space separated
+    stringstream ss(line);
+    string word;
+
+    int32_t ct = 0;
+    while (ss >> word && ct < maxTokens){
+        Token token;
+
+        if(ct == 0){
+            token.type = KEYWORD;
+        }
+        else if(ct == 1){
+            token.type = IDENTIFIER;
+        }
+        else{
+            token.type = PARAM;
+        }
+        token.text = word;
+        
+        tokens[ct++] = token;
+    
+    }
+
+    return ct;
 }
 Snapshot* buildSnapshot(Stack<Frame>& callStack)
 {
     // build the snapshot based on the callStack given
 }
+
+Variable* findVar(Frame& frame, const string& name){
+
+    for (int32_t i = 0; i < frame.argc; i++){
+        if (frame.argv[i].name == name){
+            if (frame.argvRef[i] != nullptr){
+                return frame.argvRef[i];
+            }
+
+            return &frame.argv[i];
+        }
+    }
+
+    for (int32_t i = 0; i < frame.localCount; i++){
+        if (frame.locals[i].name == name){
+            return &frame.locals[i];
+        }
+    }
+
+    return nullptr;
+
+}
+
+void setVar(Frame& frame, const string& name, int32_t value){
+
+    Variable* v = findVar(frame, name);
+
+    if(v == nullptr){
+        if(frame.localCount < MAX_VARS_PER_FRAME){
+                Variable var;
+                var.name = name;
+                var.value = value;
+                frame.locals[frame.localCount++] = var;
+            }
+    }
+    else{
+        v->value = value;
+    }
+
+}
+
+
+bool getVarValueOrLit(Frame& frame, const string& word, int32_t& value){
+    Variable* v = findVar(frame, word);
+
+    if (v != nullptr) {
+        value = v->value;
+        return true;
+    }
+    try{
+        value = stoi(word);
+        return true;
+    }
+    catch (const invalid_argument& e){
+        return false;
+    }
+
+}
+
+bool doArithmetic(Frame& frame, Token tokens[], int32_t tCount){
+
+    if(tCount < 3){
+        // cout << "Invalid args";
+
+        return false;
+    }
+
+    string op = tokens[0].text;
+
+    Variable * destVar = findVar(frame, tokens[1].text);
+    if(destVar == nullptr){
+        return false;
+    }
+
+    int32_t result = destVar->value;
+
+    for(int i = 2; i < tCount;i++){
+        int32_t operand;
+        if(!getVarValueOrLit(frame, tokens[i].text, operand)){
+            // cout << "Invalid args";
+            return false;
+        }
+
+        if(op == "add"){
+            result += operand;
+        }
+        else if(op == "sub"){
+            result -= operand;
+        }
+        else if(op == "mul"){
+            result *= operand;
+        }
+        else if(op == "div"){
+            if(operand == 0){
+                // cout << "err :div by zero";
+                return false;
+            }
+            result /= operand;
+        }
+
+        destVar->value = result;
+    }
+
+    return true;
+    
+
+}
+
+
 void executeProgram(const char* resolveBinPath, int64_t mainOffset, Timeline& timeline)
 {
     // initialize the call stack
     // make the main frame
     // push main frame on the call stack
+    // instruction set = [func, func_end, call, set, add, sub, mul and div]
 
     // implementation:
     // execute line by line, and according to the keyword perform action
+
+    FILE* f = fopen(resolveBinPath, "rb");
+
+    if (!f)
+        return;
+
+    fseek(f, mainOffset, SEEK_SET);
+
+    Stack<Frame> callStack;
+    Frame mainFrame{};
+    mainFrame.func_name = "main";
+    mainFrame.argc = 0;
+    mainFrame.localCount = 0;
+
+    callStack.push(mainFrame);
+
+    while (true){
+        string line;
+
+        int64_t lineOffset = readResolveRecord(f, line);
+        if(lineOffset == -1){
+            break;
+        }
+
+        Token tokens[MAX_TOKENS];
+        int32_t tCount = tokenizeLine(line, tokens, MAX_TOKENS);
+
+        if (tCount == 0){
+            continue;
+
+        }
+
+        if(tokens[0].text == "call"){
+                int64_t nextLine = ftell(f);
+
+                if(tCount<2){
+                    cout<<"invalid func call";
+                    break;
+                }
+
+                bool valid = true;
+
+
+                Frame func{};
+                func.func_name = tokens[1].text;
+                func.argc = 0;
+                func.localCount = 0;
+                func.returnLine = nextLine;
+
+                Frame& curFrame = callStack.peek();
+
+                for(int i = 2; i  < tCount; i++){
+                    Variable* var = findVar(curFrame, tokens[i].text);
+                    if(var == nullptr){
+                        // cout << "Invalid arg";
+                        valid = false;
+                        break;
+                    }
+                    func.argv[func.argc].name = tokens[i].text;
+                    func.argv[func.argc].value = var->value;
+                    func.argvRef[func.argc++] = var;
+                }
+
+                if(!valid){
+                    break;
+                }
+
+                callStack.push(func);
+
+        }
+        else if(tokens[0].text == "set"){
+
+            if (tCount != 3) {
+                // cout << "Invalid syntax for set";
+
+                break; 
+            }
+
+            Frame& curFunc = callStack.peek();
+
+            string destVar = tokens[1].text;
+            string valToSet = tokens[2].text;
+
+            int32_t value;
+
+            if (!getVarValueOrLit(curFunc, valToSet, value)) {
+                // cout << "Invalid argument";
+                break;
+            }
+
+            setVar(curFunc, destVar, value);
+        }
+        else if(tokens[0].text == "add" || tokens[0].text == "sub" 
+            || tokens[0].text ==  "mul" || tokens[0].text ==  "div"){
+
+                Frame& curFunc = callStack.peek();
+
+                if(!doArithmetic(curFunc, tokens, tCount)){
+                    break;
+                }
+
+        }
+
+
+
+
+        
+    
+
+
+    }
 }
 
 // PASS 0x3: SERIALIZE TIMELINE

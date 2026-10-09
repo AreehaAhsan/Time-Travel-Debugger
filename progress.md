@@ -12,6 +12,17 @@ Project Progress
 - Completed Timeline implementation 
 - Completed Stage 1 (File reading and validation)
 
-3 - 4 Oct, 26
+3-4 Oct, 26
 
 - Completed Satge 2
+
+6-7 Oct, 26
+
+- Didn't get time to do project because of lab and leetcode
+
+8-9 Oct, 26
+
+- Tried to understand execution stage, its working and execution flow (took hourss)
+- Figured out the required helper functions and implemented them
+- Implemented functionality for set, add, sub, mul, div
+- Implemeted some functionality for call
